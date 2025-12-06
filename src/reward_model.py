@@ -7,17 +7,31 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from transformers import (
-    AutoTokenizer, 
-    AutoModel, 
+    AutoTokenizer,
+    AutoModel,
     AutoConfig,
     PreTrainedModel,
-    PreTrainedTokenizer
+    PreTrainedTokenizer,
 )
 from transformers.modeling_outputs import BaseModelOutput
 from typing import Optional, Dict, List, Tuple, Union
 import logging
-import pickle
 from dataclasses import dataclass
+
+try:
+    # PyTorch 2.6+ safe loading: allowlist DistilBertConfig so that
+    # checkpoint["config"] can be unpickled when torch.load uses
+    # weights_only=True by default.
+    from torch.serialization import add_safe_globals
+    from transformers.models.distilbert.configuration_distilbert import (
+        DistilBertConfig,
+    )
+
+    add_safe_globals([DistilBertConfig])
+except Exception:
+    # Older torch versions or environments without this API will just
+    # ignore the registration and use the previous behavior.
+    pass
 
 logger = logging.getLogger(__name__)
 
