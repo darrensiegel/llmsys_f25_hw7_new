@@ -43,7 +43,9 @@ class RewardModel(PreTrainedModel):
         config,
         model_name: str = "distilbert-base-uncased",
         hidden_size: int = 768,
-        dropout: float = 0.1
+        dropout: float = 0.1,
+        use_pretrained_weights: bool = True,
+        load_tokenizer: bool = True,
     ):
         """
         Initialize the reward model.
@@ -53,14 +55,21 @@ class RewardModel(PreTrainedModel):
             model_name: Name of the base model to use
             hidden_size: Hidden size for the reward head
             dropout: Dropout probability
+            use_pretrained_weights: Whether to load pretrained weights (downloads if not cached)
+            load_tokenizer: Whether to load the tokenizer (downloads if not cached)
         """
         super().__init__(config)
         
         self.model_name = model_name
         self.hidden_size = hidden_size
 
-        self.transformer = AutoModel.from_pretrained(model_name)
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        if use_pretrained_weights:
+            # Usual path: load pretrained weights (requires cache or network)
+            self.transformer = AutoModel.from_pretrained(model_name)
+        else:
+            # Offline path: build model skeleton from provided config, weights loaded later
+            self.transformer = AutoModel.from_config(config)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name) if load_tokenizer else None
         self.config = self.transformer.config
         
         self.reward_head = nn.Sequential(
@@ -370,7 +379,10 @@ class RewardModelTrainer:
 def create_reward_model(
     model_name: str = "distilbert-base-uncased",
     hidden_size: int = 768,
-    dropout: float = 0.1
+    dropout: float = 0.1,
+    use_pretrained_weights: bool = True,
+    load_tokenizer: bool = True,
+    config: Optional[AutoConfig] = None,
 ) -> RewardModel:
     """
     Create a reward model with the specified configuration.
@@ -379,19 +391,25 @@ def create_reward_model(
         model_name: Name of the base transformer model
         hidden_size: Hidden size for the reward head
         dropout: Dropout probability
+        use_pretrained_weights: Whether to load pretrained transformer weights
+        load_tokenizer: Whether to load the tokenizer
+        config: Optional pre-loaded config to avoid download
         
     Returns:
         Initialized RewardModel
     """
-    # Load configuration from the base model
-    config = AutoConfig.from_pretrained(model_name)
+    # Load configuration from the base model (or use provided)
+    if config is None:
+        config = AutoConfig.from_pretrained(model_name)
     
     # Create and return the reward model
     model = RewardModel(
         config=config,
         model_name=model_name,
         hidden_size=hidden_size,
-        dropout=dropout
+        dropout=dropout,
+        use_pretrained_weights=use_pretrained_weights,
+        load_tokenizer=load_tokenizer,
     )
     
     logger.info(f"Created reward model based on {model_name}")
@@ -418,8 +436,15 @@ def load_reward_model(model_path: str, device: torch.device) -> RewardModel:
     model_name = checkpoint.get('model_name', 'distilbert-base-uncased')
     hidden_size = checkpoint.get('hidden_size', 768)
     
-    # Create model
-    model = create_reward_model(model_name, hidden_size)
+    # Create model without needing network access (weights are in checkpoint)
+    model = create_reward_model(
+        model_name=model_name,
+        hidden_size=hidden_size,
+        dropout=0.1,  # dropout isn't stored; use default (irrelevant after loading weights)
+        use_pretrained_weights=False,  # build from config; weights come from checkpoint
+        load_tokenizer=False,          # tokenizer not needed for model loading
+        config=config
+    )
     
     # Load state dict
     model.load_state_dict(checkpoint['model_state_dict'])
