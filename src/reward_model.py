@@ -16,6 +16,7 @@ from transformers import (
 from transformers.modeling_outputs import BaseModelOutput
 from typing import Optional, Dict, List, Tuple, Union
 import logging
+import pickle
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -429,7 +430,13 @@ def load_reward_model(model_path: str, device: torch.device) -> RewardModel:
     Returns:
         Loaded RewardModel
     """
-    checkpoint = torch.load(model_path, map_location=device)
+    # Torch 2.6+ defaults to weights_only=True, which can fail to load
+    # non-tensor objects like HuggingFace configs. Fall back to the
+    # previous unsafe-but-flexible behavior when that happens.
+    try:
+        checkpoint = torch.load(model_path, map_location=device)
+    except pickle.UnpicklingError:
+        checkpoint = torch.load(model_path, map_location=device, weights_only=False)
     
     # Extract model configuration
     config = checkpoint.get('config')
