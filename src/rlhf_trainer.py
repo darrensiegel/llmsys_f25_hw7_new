@@ -464,19 +464,53 @@ class VERLTrainer:
             Tuple of (advantages, returns)
         """
         # BEGIN ASSIGN7_2_1
-        # TODO: Implement GAE computation.
-        # HINT: For this assignment, think of each token as a step in a multi-step episode (like time steps in a trajectory).
-        # For each sequence in the batch:
-        #   - Create an expanded reward tensor (same shape as values), where only the last token position (according to attention_mask) has the sequence reward, and all earlier tokens are zero.
-        #   - For each token position, compute returns as: returns[i] = reward[i] + gamma * value[i + 1] (set value[last+1] = 0).
-        #   - Compute advantage for each token as: advantage[i] = returns[i] - value[i].
-        # Only compute these where the attention_mask is 1 (i.e., for valid tokens, not padding).
-        # END ASSIGN7_2_1
-        raise NotImplementedError("Need to implement GAE computation for Assignment 7")
-        
-        # END ASSIGN7_2_1
-        
+        # Implement a token-level GAE-style computation. Each token
+        # position corresponds to a time step, but only the final
+        # valid token in each sequence receives the scalar reward;
+        # earlier tokens get zero immediate reward and only receive
+        # discounted value from future states.
+
+        gamma = self.config.training.ppo_gamma
+
+        batch_size, seq_len = values.shape
+
+        # Expanded rewards and outputs have the same shape as values.
+        expanded_rewards = torch.zeros_like(values)
+        advantages = torch.zeros_like(values)
+        returns = torch.zeros_like(values)
+
+        # Boolean attention mask for convenience.
+        attn_bool = attention_mask.bool()
+
+        for b in range(batch_size):
+            valid_positions = attn_bool[b].nonzero(as_tuple=False).view(-1)
+            if valid_positions.numel() == 0:
+                continue
+
+            # Index of the last valid token for this sequence.
+            last_idx = valid_positions[-1].item()
+
+            # Only the last valid token position receives the sequence reward.
+            expanded_rewards[b, last_idx] = rewards[b]
+
+            # Work backwards to compute returns and advantages.
+            for t in range(last_idx, -1, -1):
+                r_t = expanded_rewards[b, t]
+                if t == last_idx:
+                    next_value = values.new_zeros(())
+                else:
+                    next_value = values[b, t + 1]
+
+                returns[b, t] = r_t + gamma * next_value
+                advantages[b, t] = returns[b, t] - values[b, t]
+
+        # Zero out padding positions explicitly.
+        mask_float = attention_mask.float()
+        advantages = advantages * mask_float
+        returns = returns * mask_float
+
         return advantages, returns
+        # END ASSIGN7_2_1
     
     def train_step(self, rollout_batch: RolloutBatch) -> TrainingMetrics:
         """
@@ -526,14 +560,22 @@ class VERLTrainer:
             advantages = rollout_batch.advantages[:, prompt_len - 1 : -1][new_log_probs_mask]
             
             # BEGIN ASSIGN7_2_2
-            # TODO: Compute PPO loss
-            # 1. Compute probability ratio: exp(new_log_probs - old_log_probs)
-            # 2. Compute surrogate losses:
-            #    - surr1 = ratio * advantages
-            #    - surr2 = clipped_ratio * advantages (clip ratio between 1-eps and 1+eps)
-            # 3. Policy loss = -min(surr1, surr2).mean()
-            # 4. Compute entropy bonus from policy logits
-            raise NotImplementedError("Need to implement PPO loss computation for Assignment 7")
+            # Compute PPO clipped objective.
+            # 1. Probability ratio between new and old policies.
+            ratio = torch.exp(new_log_probs - old_log_probs)
+
+            # 2. Clipped surrogate objectives.
+            eps = self.config.verl.ppo_clip_eps
+            clipped_ratio = torch.clamp(ratio, 1.0 - eps, 1.0 + eps)
+
+            surr1 = ratio * advantages
+            surr2 = clipped_ratio * advantages
+
+            # 3. Policy loss: negative of the minimum surrogate.
+            policy_loss = -torch.min(surr1, surr2).mean()
+
+            # 4. Entropy bonus from policy logits (encourages exploration).
+            entropy = self._compute_entropy(scores)
             
             # END ASSIGN7_2_2
             
@@ -612,12 +654,15 @@ class VERLTrainer:
             Entropy values
         """
         # BEGIN ASSIGN7_2_3
-        # TODO: Compute entropy from logits
-        # 1. Convert logits to probabilities using softmax
-        # 2. Convert logits to log_probabilities using log_softmax
-        # 3. Compute entropy: -(probs * log_probs).sum(dim=-1)
-        # 4. Return mean over sequence length
-        raise NotImplementedError("Need to implement entropy computation for Assignment 7")
+        # Convert logits to probabilities and log-probabilities.
+        probs = torch.softmax(logits, dim=-1)
+        log_probs = torch.log_softmax(logits, dim=-1)
+
+        # Token-wise entropy: H = -(p * log p) summed over vocab.
+        token_entropy = -(probs * log_probs).sum(dim=-1)
+
+        # Return mean entropy over batch and sequence length.
+        return token_entropy.mean()
         
         # END ASSIGN7_2_3
     

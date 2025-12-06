@@ -308,17 +308,17 @@ class RewardModelTrainer:
             return_dict=True
         )
         chosen_rewards = chosen_outputs.rewards
+        # chosen_rewards = chosen_rewards.squeeze(-1)
 
-        # Compute rewards for rejected responses
+        # compute rewards for rejected responses...
         rejected_outputs = self.model(
             **batch['rejected'],
             return_dict=True
         )
         rejected_rewards = rejected_outputs.rewards
 
-        # MarginRankingLoss expects a target tensor of 1s when the first input
-        # should be ranked higher than the second.
         target = torch.ones_like(chosen_rewards, device=self.device)
+        # loss = self.loss_fn(chosen_rewards, rejected_rewards, target)
         loss = self.loss_fn(chosen_rewards, rejected_rewards, target)
 
         return loss, chosen_rewards, rejected_rewards
