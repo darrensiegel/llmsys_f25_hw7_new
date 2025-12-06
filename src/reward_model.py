@@ -419,6 +419,7 @@ def create_reward_model(
     return model
 
 
+
 def load_reward_model(model_path: str, device: torch.device) -> RewardModel:
     """
     Load a trained reward model from disk.
@@ -430,28 +431,15 @@ def load_reward_model(model_path: str, device: torch.device) -> RewardModel:
     Returns:
         Loaded RewardModel
     """
-    # Torch 2.6+ defaults to weights_only=True, which can fail to load
-    # non-tensor objects like HuggingFace configs. Fall back to the
-    # previous unsafe-but-flexible behavior when that happens.
-    try:
-        checkpoint = torch.load(model_path, map_location=device)
-    except pickle.UnpicklingError:
-        checkpoint = torch.load(model_path, map_location=device, weights_only=False)
+    checkpoint = torch.load(model_path, map_location=device)
     
     # Extract model configuration
     config = checkpoint.get('config')
     model_name = checkpoint.get('model_name', 'distilbert-base-uncased')
     hidden_size = checkpoint.get('hidden_size', 768)
     
-    # Create model without needing network access (weights are in checkpoint)
-    model = create_reward_model(
-        model_name=model_name,
-        hidden_size=hidden_size,
-        dropout=0.1,  # dropout isn't stored; use default (irrelevant after loading weights)
-        use_pretrained_weights=False,  # build from config; weights come from checkpoint
-        load_tokenizer=False,          # tokenizer not needed for model loading
-        config=config
-    )
+    # Create model
+    model = create_reward_model(model_name, hidden_size)
     
     # Load state dict
     model.load_state_dict(checkpoint['model_state_dict'])
